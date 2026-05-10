@@ -13,10 +13,15 @@ from scipy import stats
 import matplotlib.pyplot as plt
 import numpy as np
 
-GWASid = "ebi-a-GCST004448"
+
+# https://opengwas.io/datasets/ - Interleuken-2 receptor - openGWASID 
+GWASid = "prot-a-1517" 
+
+# Outcome ID
 OUTCOME_ID = "ebi-a-GCST90014023"
 
-HLA_SNPs = ["rs2187668", "rs9273368", "rs9273363", "rs9272346", "rs2647044"]
+# Exposure ID - https://www.ebi.ac.uk/gwas/ - "pQTL" 
+HLA_SNPs = ["rs12722495-A", "rs61839660-C", "rs12722496-G"]
 
 
 # x = []; y = []
@@ -53,6 +58,7 @@ def mr_analysis(variants = [], snps=HLA_SNPs):
         print(exposure_raw)
         if not exposure_raw:
             print("No significant SNPs found via tophits. Trying specific variant...")
+            return
             exposure_raw = gwas.associations(variant=variants, id=[GWASid])
         
         if not exposure_raw:
@@ -175,3 +181,6 @@ if __name__ == "__main__":
     gwas_id_to_check = ["rs2187668", "rs9273368", "rs9273363", "rs9272346", "rs2647044"]
     mr_analysis(gwas_id_to_check, HLA_SNPs)
     print("Done")
+
+
+
