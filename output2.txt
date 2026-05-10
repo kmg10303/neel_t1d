@@ -1,0 +1,11 @@
+Env variables have been loaded from .ieugwaspy.json as follows:
+ {'base_url': 'https://api.opengwas.io/api/', 'jwt': 'eyJhbGciOiJSUzI1NiIsImtpZCI6ImFwaS1qd3QiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJhcGkub3Blbmd3YXMuaW8iLCJhdWQiOiJhcGkub3Blbmd3YXMuaW8iLCJzdWIiOiJrYXZpZ2FzcGVyQGNvbGxlZ2UuaGFydmFyZC5lZHUiLCJpYXQiOjE3NzE0NTQyOTcsImV4cCI6MTc3MjY2Mzg5N30.ntmnF81N8OoRW4u4Q1Ygj6ehwWekrwDRTHy_5NwVbXzRjBFaQYORkiEUSvVbLpwFyTqg1bS-8Gd2Ca-qdVJQ-TPjxbiTqXXvvigdXurN_ERwws86KqNtOaNOVuxXSAL6nkt6wqLvZCcas9NwDybKi2FvKv6xXoQ4-pGsMMupBK2J0eVRjZAB4OK0NGwyvjHJPbG596tG1W42-dZMUqCobTAy2avG04rkusY8GI7aLrbSIIJ_BkONUVTWyW1J3RX89BSHXrswPFH7j6NZ6bgqrEtz6EBSHDDYEiJJj-U8DG34h5-mf6PEglTpIXm-FLdApDsxDNYxSXfyFP2spFTvHQ', 'test_mode_key': ''}
+Loading data
+<class 'list'>
+[]
+No significant SNPs found via tophits. Trying specific variant...
+Found 1 genetic instruments.
+SNP: rs9273368
+Causal Estimate (Beta): 27.3129
+Standard Error: 0.3081
+P-value: 0.0000

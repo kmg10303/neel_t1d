@@ -1,0 +1,109 @@
+FIRST Results
+
+    Env variables have been loaded from .ieugwaspy.json as follows:
+    {'base_url': 'https://api.opengwas.io/api/', 'jwt': 'eyJhbGciOiJSUzI1NiIsImtpZCI6ImFwaS1qd3QiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJhcGkub3Blbmd3YXMuaW8iLCJhdWQiOiJhcGkub3Blbmd3YXMuaW8iLCJzdWIiOiJrYXZpZ2FzcGVyQGNvbGxlZ2UuaGFydmFyZC5lZHUiLCJpYXQiOjE3NzE0NTQyOTcsImV4cCI6MTc3MjY2Mzg5N30.ntmnF81N8OoRW4u4Q1Ygj6ehwWekrwDRTHy_5NwVbXzRjBFaQYORkiEUSvVbLpwFyTqg1bS-8Gd2Ca-qdVJQ-TPjxbiTqXXvvigdXurN_ERwws86KqNtOaNOVuxXSAL6nkt6wqLvZCcas9NwDybKi2FvKv6xXoQ4-pGsMMupBK2J0eVRjZAB4OK0NGwyvjHJPbG596tG1W42-dZMUqCobTAy2avG04rkusY8GI7aLrbSIIJ_BkONUVTWyW1J3RX89BSHXrswPFH7j6NZ6bgqrEtz6EBSHDDYEiJJj-U8DG34h5-mf6PEglTpIXm-FLdApDsxDNYxSXfyFP2spFTvHQ', 'test_mode_key': ''}
+    Loading data
+    <class 'list'>
+    []
+    No significant SNPs found via tophits. Trying specific variant...
+    Found 1 genetic instruments.
+    SNP: rs12050555
+    Causal Estimate (Beta): -2.4880
+    Standard Error: 8.2135
+    P-value: 0.7620
+
+    ----- MR Results (IVW via WLS) -----
+    An error occurred: resids must contain at least 2 elements
+
+
+
+SECOND Results
+
+    Env variables have been loaded from .ieugwaspy.json as follows:
+    {'base_url': 'https://api.opengwas.io/api/', 'jwt': 'eyJhbGciOiJSUzI1NiIsImtpZCI6ImFwaS1qd3QiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJhcGkub3Blbmd3YXMuaW8iLCJhdWQiOiJhcGkub3Blbmd3YXMuaW8iLCJzdWIiOiJrYXZpZ2FzcGVyQGNvbGxlZ2UuaGFydmFyZC5lZHUiLCJpYXQiOjE3NzE0NTQyOTcsImV4cCI6MTc3MjY2Mzg5N30.ntmnF81N8OoRW4u4Q1Ygj6ehwWekrwDRTHy_5NwVbXzRjBFaQYORkiEUSvVbLpwFyTqg1bS-8Gd2Ca-qdVJQ-TPjxbiTqXXvvigdXurN_ERwws86KqNtOaNOVuxXSAL6nkt6wqLvZCcas9NwDybKi2FvKv6xXoQ4-pGsMMupBK2J0eVRjZAB4OK0NGwyvjHJPbG596tG1W42-dZMUqCobTAy2avG04rkusY8GI7aLrbSIIJ_BkONUVTWyW1J3RX89BSHXrswPFH7j6NZ6bgqrEtz6EBSHDDYEiJJj-U8DG34h5-mf6PEglTpIXm-FLdApDsxDNYxSXfyFP2spFTvHQ', 'test_mode_key': ''}
+    Loading data
+    <class 'list'>
+    []
+    No significant SNPs found via tophits. Trying specific variant...
+    Found 1 genetic instruments.
+    SNP: rs9273368
+    Causal Estimate (Beta): 27.3129
+    Standard Error: 0.3081
+    P-value: 0.0000
+
+
+THIRD Result
+
+    Env variables have been loaded from .ieugwaspy.json as follows:
+    {'base_url': 'https://api.opengwas.io/api/', 'jwt': 'eyJhbGciOiJSUzI1NiIsImtpZCI6ImFwaS1qd3QiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJhcGkub3Blbmd3YXMuaW8iLCJhdWQiOiJhcGkub3Blbmd3YXMuaW8iLCJzdWIiOiJrYXZpZ2FzcGVyQGNvbGxlZ2UuaGFydmFyZC5lZHUiLCJpYXQiOjE3NzE0NTQyOTcsImV4cCI6MTc3MjY2Mzg5N30.ntmnF81N8OoRW4u4Q1Ygj6ehwWekrwDRTHy_5NwVbXzRjBFaQYORkiEUSvVbLpwFyTqg1bS-8Gd2Ca-qdVJQ-TPjxbiTqXXvvigdXurN_ERwws86KqNtOaNOVuxXSAL6nkt6wqLvZCcas9NwDybKi2FvKv6xXoQ4-pGsMMupBK2J0eVRjZAB4OK0NGwyvjHJPbG596tG1W42-dZMUqCobTAy2avG04rkusY8GI7aLrbSIIJ_BkONUVTWyW1J3RX89BSHXrswPFH7j6NZ6bgqrEtz6EBSHDDYEiJJj-U8DG34h5-mf6PEglTpIXm-FLdApDsxDNYxSXfyFP2spFTvHQ', 'test_mode_key': ''}
+    Loading data
+    <class 'list'>
+    []
+    No significant SNPs found via tophits. Trying specific variant...
+    Found 3 genetic instruments.
+
+    ----- MR Results (IVW via WLS) -----
+                                    WLS Regression Results                                
+    =======================================================================================
+    Dep. Variable:               beta_out   R-squared (uncentered):                   0.879
+    Model:                            WLS   Adj. R-squared (uncentered):              0.818
+    Method:                 Least Squares   F-statistic:                              14.51
+    Date:                Mon, 02 Mar 2026   Prob (F-statistic):                      0.0625         
+    Time:                        18:32:09   Log-Likelihood:                         -2.0043
+    No. Observations:                   3   AIC:                                      6.009
+    Df Residuals:                       2   BIC:                                      5.107
+    Df Model:                           1                                                  
+    Covariance Type:            nonrobust                                                  
+    ==============================================================================
+                    coef    std err          t      P>|t|      [0.025      0.975]
+    ------------------------------------------------------------------------------
+    beta_exp      28.7945      7.560      3.809      0.063      -3.734      61.323
+    ==============================================================================
+    Omnibus:                          nan   Durbin-Watson:                   1.238
+    Prob(Omnibus):                    nan   Jarque-Bera (JB):                0.520
+    Skew:                           0.691   Prob(JB):                        0.771
+    Kurtosis:                       1.500   Cond. No.                         1.00
+    ==============================================================================
+
+    Notes:
+    [1] R² is computed without centering (uncentered) since the model does not contain a constant.
+    [2] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+
+
+FOURTH Result
+
+Env variables have been loaded from .ieugwaspy.json as follows:
+ {'base_url': 'https://api.opengwas.io/api/', 'jwt': 'eyJhbGciOiJSUzI1NiIsImtpZCI6ImFwaS1qd3QiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJhcGkub3Blbmd3YXMuaW8iLCJhdWQiOiJhcGkub3Blbmd3YXMuaW8iLCJzdWIiOiJrYXZpZ2FzcGVyQGNvbGxlZ2UuaGFydmFyZC5lZHUiLCJpYXQiOjE3NzE0NTQyOTcsImV4cCI6MTc3MjY2Mzg5N30.ntmnF81N8OoRW4u4Q1Ygj6ehwWekrwDRTHy_5NwVbXzRjBFaQYORkiEUSvVbLpwFyTqg1bS-8Gd2Ca-qdVJQ-TPjxbiTqXXvvigdXurN_ERwws86KqNtOaNOVuxXSAL6nkt6wqLvZCcas9NwDybKi2FvKv6xXoQ4-pGsMMupBK2J0eVRjZAB4OK0NGwyvjHJPbG596tG1W42-dZMUqCobTAy2avG04rkusY8GI7aLrbSIIJ_BkONUVTWyW1J3RX89BSHXrswPFH7j6NZ6bgqrEtz6EBSHDDYEiJJj-U8DG34h5-mf6PEglTpIXm-FLdApDsxDNYxSXfyFP2spFTvHQ', 'test_mode_key': ''}
+Loading data
+<class 'list'>
+[]
+No significant SNPs found via tophits. Trying specific variant...
+Found 3 genetic instruments.
+
+----- MR Results (IVW via WLS) -----
+                                 WLS Regression Results                                
+=======================================================================================
+Dep. Variable:               beta_out   R-squared (uncentered):                   0.898
+Model:                            WLS   Adj. R-squared (uncentered):              0.865
+Method:                 Least Squares   F-statistic:                              26.53
+Date:                Mon, 02 Mar 2026   Prob (F-statistic):                      0.0142
+Time:                        18:58:17   Log-Likelihood:                         -3.5755
+No. Observations:                   4   AIC:                                      9.151
+Df Residuals:                       3   BIC:                                      8.537
+Df Model:                           1                                                  
+Covariance Type:            nonrobust                                                  
+==============================================================================
+                 coef    std err          t      P>|t|      [0.025      0.975]
+------------------------------------------------------------------------------
+beta_exp      28.1774      5.470      5.151      0.014      10.769      45.586
+==============================================================================
+Omnibus:                          nan   Durbin-Watson:                   1.162
+Prob(Omnibus):                    nan   Jarque-Bera (JB):                0.560
+Skew:                           0.738   Prob(JB):                        0.756
+Kurtosis:                       1.913   Cond. No.                         1.00
+==============================================================================
+
+Notes:
+[1] R² is computed without centering (uncentered) since the model does not contain a constant.
+[2] Standard Errors assume that the covariance matrix of the errors is correctly specified.
+
