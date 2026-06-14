@@ -1,3 +1,24 @@
+To do for 5/31:
+- Methodology up to this point (keep 1 paragraph)
+- Editing intro and data source section
+- python dowhy --> reading through the intro documentation
+
+
+Implementation Plan:
+
+Task 1: Add more models. 
+- WLS w/ different intercepts.
+- Median, weighted median (medians of our Wald ratios)
+
+Task 2: Fix the scatter plot.
+
+Task 3: Turn our models into causal models.
+- use python dowhy package
+
+
+
+
+
 **For Neel to research over the next few weeks**
 
 Write-up:

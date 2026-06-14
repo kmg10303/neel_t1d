@@ -13,14 +13,48 @@ from scipy import stats
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-# https://opengwas.io/datasets/ - Interleuken-2 receptor - openGWASID 
-GWASid = "prot-a-1517" 
+# Ahola-Olli 2017 IL-6 pQTL GWAS (ieu-b- batch, 41 cytokines, N=8293)
+# Verify ID with: gwas.gwasinfo(["ieu-b-30"])
+# https://opengwas.io/datasets/
+#ebi-a-GCST004446
+#ieu-b-30
+# prot-a-1538
+# ukb-e-30000_CSA - White blood count
+GWASid = "prot-a-1538"
 
 # Outcome ID
 OUTCOME_ID = "ebi-a-GCST90014023"
 
-# Exposure ID - https://www.ebi.ac.uk/gwas/ - "pQTL" 
+# Literature-curated IL-6 pQTL instruments (Ahola-Olli 2017 + IL6R literature)
+IL6_PRIMARY = "rs4537545"
+IL6_INSTRUMENTS = [
+    "rs1524107",
+    "rs1554606",
+    "rs2069852",
+]
+
+# Set True to fetch instruments from OpenGWAS tophits with LD clumping (requires valid JWT).
+# Set False to use the hardcoded IL6_INSTRUMENTS list above.
+USE_TOPHITS = True
+
+def get_instruments():
+    if not USE_TOPHITS:
+        return IL6_INSTRUMENTS
+    print("Fetching tophits + LD clumping from OpenGWAS (requires valid JWT)...")
+    hits = gwas.tophits(id=[GWASid], pval=5e-5, clump=1, kb=10000, r2=0.001, pop="EUR")
+    # API returns a dict with "message" key on auth errors instead of a list
+    if not hits or isinstance(hits, dict):
+        msg = hits.get("message", "empty response") if isinstance(hits, dict) else "empty response"
+        print(f"WARNING: tophits failed ({msg}). Falling back to hardcoded IL6_INSTRUMENTS.")
+        return IL6_INSTRUMENTS
+    snp_list = [h["rsid"] for h in hits if "rsid" in h]
+    if not snp_list:
+        print("WARNING: tophits returned hits but no rsids. Falling back to hardcoded IL6_INSTRUMENTS.")
+        return IL6_INSTRUMENTS
+    print(f"Tophits returned {len(snp_list)} clumped instruments: {snp_list}")
+    return snp_list[:63]
+
+# Retained for backward-compatibility with gwas_id_check()
 HLA_SNPs = ["rs12722495-A", "rs61839660-C", "rs12722496-G"]
 
 
@@ -39,7 +73,7 @@ def plot_mr(x, y, merged):
     plt.legend()
     plt.savefig("scatterplot.png")
 
-def mr_analysis(variants = [], snps=HLA_SNPs):
+def mr_analysis(snps=HLA_SNPs):
     try:
         print("Loading data")
         # Standardizing column mapping for ieugwaspy
@@ -52,18 +86,15 @@ def mr_analysis(variants = [], snps=HLA_SNPs):
         }
 
 
-        # variants = ["rs9272346"]
-        exposure_raw = gwas.tophits(GWASid, pval=5e-8, clump=1) # Clump=1 is usually better for MR
-        print(type(exposure_raw))
-        print(exposure_raw)
-        if not exposure_raw:
-            print("No significant SNPs found via tophits. Trying specific variant...")
+        instruments = get_instruments()
+        print(f"Fetching IL-6 exposure data for {len(instruments)} instruments...")
+        exposure_raw = gwas.associations(variant=instruments, id=[GWASid])
+
+        if not exposure_raw or isinstance(exposure_raw, dict):
+            print("No exposure data found. Check GWASid or API token.")
+            print(type(exposure_raw), exposure_raw)
             return
-            exposure_raw = gwas.associations(variant=variants, id=[GWASid])
         
-        if not exposure_raw:
-            print("No exposure data found.")
-            return
 
         exposure = pd.DataFrame(exposure_raw).rename(columns=col_map)
         snps = exposure["rsid"].dropna().unique().tolist()
@@ -98,12 +129,23 @@ def mr_analysis(variants = [], snps=HLA_SNPs):
         
         merged = merged[same | swap].copy()
         merged.loc[swap, "beta_out"] *= -1
+
+        # summary_df = merged.rename(columns={"beta_exp": "IL6", "beta_out": "T1D"})
         
         if merged.empty:
             print("No harmonized SNPs left.")
             return
         
         num_snps = len(merged)
+
+        # F-statistic per instrument
+        merged["F_stat"] = (merged["beta_exp"] / merged["se_exp"]) ** 2
+        merged["weak"] = merged["F_stat"] < 10
+        print("\n----- Instrument Strength (F-statistics) -----")
+        print(merged[["rsid", "beta_exp", "se_exp", "F_stat", "weak"]].to_string(index=False))
+        weak_count = int(merged["weak"].sum())
+        if weak_count:
+            print(f"WARNING: {weak_count} instrument(s) have F < 10 (weak instrument bias risk).")
 
         # If only one SNP, perform Wald ratio
         if num_snps < 2:
@@ -134,8 +176,8 @@ def mr_analysis(variants = [], snps=HLA_SNPs):
         print(wls.summary())
 
         # print(wls.params)
-        x_line = np.linspace(merged["beta_exp"].min(), merged["beta_out"].max())
-        plot_mr(x_line, wls.params[0] * x_line, merged)
+        x_line = np.linspace(merged["beta_exp"].min(), merged["beta_exp"].max())
+        plot_mr(x_line, wls.params.iloc[0] * x_line, merged)
         
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -178,8 +220,7 @@ def gwas_id_check(ids, snps):
         # Done
 
 if __name__ == "__main__":
-    gwas_id_to_check = ["rs2187668", "rs9273368", "rs9273363", "rs9272346", "rs2647044"]
-    mr_analysis(gwas_id_to_check, HLA_SNPs)
+    mr_analysis()
     print("Done")
 
 
