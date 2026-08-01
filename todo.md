@@ -1,3 +1,8 @@
+To do for 8/8:
+- Methodology is slightly different now. This is the final version. Can do a quick write-up on the methodology this week.
+- Using GAI, attempt to add the real estimate section of the causal graph. 
+
+
 To do for 5/31:
 - Methodology up to this point (keep 1 paragraph)
 - Editing intro and data source section
