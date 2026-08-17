@@ -1,7 +1,7 @@
 import numpy as np  
 import pandas as pd 
 from dowhy import CausalModel
-
+import statsmodels.api as sm
 INSTRUMENTS = pd.DataFrame({
     "rsid":     ["rs1554606", "rs1524107", "rs2069852"],
     "beta_exp": [-0.015253,   -0.025149,   -0.026594],
@@ -66,10 +66,60 @@ def simulate(n=N_PEOPLE, seed=SEED):
     df["T1D"] = t1d
     return df
 
+def iv_wald(df, snps, outcome="T1D", exposure="IL6"):
+    Z = sm.add_constant(df[snps])
+    
+    first = sm.OLS(df[exposure], Z).fit()
+    second = sm.OLD(df[outcome], sm.add_constant(first.fittedvalues)).fit()
+    return second.params[1], second.pvalues[1], first
+
+# We already have an outcome.
+# What if we took our exposure and other data, ignored the outcome, and tried to create our own outcome.
+# So now we can compare our two outcomes to see how alike they are. 
+def negative_control_outcome(____, _____): 
+    # we need some randomness
+    # rng = np.random... 
+    # nc = weight * (full["BMI"] - 25) + weight 
+    # Note, we do want to include U in this. 
+    # Now we can compare the negative control with the ovserved.
+    # d = observed.copy() [NOTE: You will have to pass observed into the function as parameter]. 
+    # Sequence of prints
+    # print("negative control outcome test")
+    # PASS = abs(est - obs) < 0.5 else FAIL (we want something really close to 0). 
+
+    pass
+
+def leave_one_out(____):
+    # First grab the snps
+    # print ("leave one out test")
+    # full_est_, _, _ = iv_wald(observed, snps) [NOTE: observed is passed into the function as a parameter. SNPS is grabbed at the top line of the function.]
+    # for loop
+    # keep snps except one
+    # 
 
 
+    pass
 
 
+def mr_egger(merged):
+    d = merged.copy()
+
+    X = sm.add_constant(d["beta_exp"])
+
+    egger = sm.WLS(d["beta_out"], X, weights=weights).fit()
+
+    intercept, slope = egger.params["const"], egger.params["beta_exp"]
+    intercept_p, slope_p = egger.pvalues["const"], egger.pvalues["beta_exp"]
+
+    print("---- MR-Egger ----")
+    print(f"Slope (causal estimate): {slope:.4f}")
+    print(f" Intercept (pleiotropy): {intercept:.4f}")
+
+    if intercept_p < .1:
+        print("The intercept is significant, suggesting pleiotropy. Prefer to use the Egger slope")
+    else:
+        print("The intercept is not significant, suggesting no pleiotropy")
+    return slope, slope_p, intercept, intercept_p
 
 # Might have to fiddle around with the DAG here. Adding/removing confounding variables
 def causal_graph():
@@ -86,7 +136,6 @@ def causal_graph():
     return "digraph { " + " ".join(edges) + " }" 
 
 def naive_estimate(df):
-    import statsmodels.api as sm
     X = sm.add_constant(df[["IL6", "BMI", "AGE", "SMOKING"]])
     return sm.OLS(df["T1D"], X).fit().params["IL6"]
 
@@ -130,11 +179,12 @@ def run():
         print("  -> IV estimate is OUTSIDE the IVW interval; check calibration.")
 
 
-    # Real estimate
+    # MR Egger regression
 
+    mr_egger(observed)
 
-    
-
+    # Wald Regression
+    iv_wald(observed, list(INSTRUMENTS["rsid"]))
 
 
 
