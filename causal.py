@@ -1,7 +1,25 @@
-import numpy as np  
-import pandas as pd 
+"""
+DoWhy causal model for the IL-6 -> T1D question.
+
+DoWhy needs individual-level data (one row per person). mr_t1d.py's IVW/WLS
+pipeline operates on two-sample SUMMARY statistics (one row per SNP). Those are
+not the same thing, so this script builds a synthetic cohort CALIBRATED to the
+real SNP-exposure betas from prot-a-1538, with a known true causal effect set
+to the IVW estimate from mr_t1d.py. This is a method-validation study, not new
+evidence about T1D -- see PROJECT_STATUS.md for what that does and doesn't mean.
+
+MR-Egger / weighted median / Cochran's Q are NOT run here: those operate on
+summary-stats (beta_exp, beta_out, se_out per SNP), which this individual-level
+simulation doesn't have. They live in mr_t1d.py, where the real summary data is.
+
+Run:  ./venv/bin/python causal.py
+"""
+
+import numpy as np
+import pandas as pd
 from dowhy import CausalModel
 import statsmodels.api as sm
+
 INSTRUMENTS = pd.DataFrame({
     "rsid":     ["rs1554606", "rs1524107", "rs2069852"],
     "beta_exp": [-0.015253,   -0.025149,   -0.026594],
@@ -45,7 +63,7 @@ def simulate(n=N_PEOPLE, seed=SEED):
     il6 += (smoking) * 0.060
     il6 += u * 0.250
     il6 += rng.normal(0, 0.30, n)
-    
+
     # Outcome
 
     t1d = (
@@ -66,60 +84,65 @@ def simulate(n=N_PEOPLE, seed=SEED):
     df["T1D"] = t1d
     return df
 
-def iv_wald(df, snps, outcome="T1D", exposure="IL6"):
+
+def _iv_wald(df, snps, outcome="T1D", exposure="IL6"):
+    """Two-stage least squares by hand, independent of DoWhy's refuter
+    internals -- so these tests don't depend on what DoWhy's IV estimator is
+    doing under the hood."""
     Z = sm.add_constant(df[snps])
-    
     first = sm.OLS(df[exposure], Z).fit()
-    second = sm.OLD(df[outcome], sm.add_constant(first.fittedvalues)).fit()
-    return second.params[1], second.pvalues[1], first
-
-# We already have an outcome.
-# What if we took our exposure and other data, ignored the outcome, and tried to create our own outcome.
-# So now we can compare our two outcomes to see how alike they are. 
-def negative_control_outcome(____, _____): 
-    # we need some randomness
-    # rng = np.random... 
-    # nc = weight * (full["BMI"] - 25) + weight 
-    # Note, we do want to include U in this. 
-    # Now we can compare the negative control with the ovserved.
-    # d = observed.copy() [NOTE: You will have to pass observed into the function as parameter]. 
-    # Sequence of prints
-    # print("negative control outcome test")
-    # PASS = abs(est - obs) < 0.5 else FAIL (we want something really close to 0). 
-
-    pass
-
-def leave_one_out(____):
-    # First grab the snps
-    # print ("leave one out test")
-    # full_est_, _, _ = iv_wald(observed, snps) [NOTE: observed is passed into the function as a parameter. SNPS is grabbed at the top line of the function.]
-    # for loop
-    # keep snps except one
-    # 
+    second = sm.OLS(df[outcome], sm.add_constant(first.fittedvalues)).fit()
+    return second.params.iloc[1], second.resid, first
 
 
-    pass
+def _negative_control_outcome(observed, full):
+    """A negative control outcome driven by the same confounders/U as T1D,
+    but NOT by IL-6. A valid instrument set must return ~0 here. If it
+    doesn't, the SNPs reach the outcome through something other than IL-6 --
+    the exclusion restriction is broken."""
+    rng = np.random.default_rng(SEED + 1)
+    nc = (0.01 * (full["BMI"] - 25) + 0.03 * full["SMOKING"]
+          + 0.40 * full["U"] + rng.normal(0, 1.0, len(full)))
+    d = observed.copy()
+    d["NEG_CONTROL"] = nc
+    snps = list(INSTRUMENTS["rsid"])
+    est, _, _ = _iv_wald(d, snps, outcome="NEG_CONTROL")
+    print("\n[negative control outcome]")
+    print(f"  IV estimate on an outcome IL-6 does not cause: {est:+.4f}")
+    print(f"  {'PASS' if abs(est) < 0.5 else 'FAIL'} (expect ~0; "
+          f"compare to the real estimate of {IVW_BETA:.2f})")
 
 
-def mr_egger(merged):
-    d = merged.copy()
+def _overidentification_test(observed):
+    """Sargan test. With 3 instruments and 1 exposure there are 2
+    overidentifying restrictions -- if the SNPs disagree about the causal
+    effect, at least one is invalid. Real-data analogue: cochrans_q() in
+    mr_t1d.py."""
+    from scipy import stats as st
+    snps = list(INSTRUMENTS["rsid"])
+    _, resid, _ = _iv_wald(observed, snps)
+    aux = sm.OLS(resid, sm.add_constant(observed[snps])).fit()
+    n = len(observed)
+    sargan = n * aux.rsquared
+    dfree = len(snps) - 1
+    p = 1 - st.chi2.cdf(sargan, dfree)
+    print("\n[Sargan overidentification test]")
+    print(f"  statistic = {sargan:.3f} on {dfree} df, p = {p:.3f}")
+    print(f"  {'PASS' if p > 0.05 else 'FAIL'} -- a small p says the instruments disagree, "
+          f"implicating pleiotropy or a broken exclusion restriction.")
 
-    X = sm.add_constant(d["beta_exp"])
 
-    egger = sm.WLS(d["beta_out"], X, weights=weights).fit()
+def _leave_one_out(observed):
+    """Is the estimate driven by one influential SNP?"""
+    snps = list(INSTRUMENTS["rsid"])
+    print("\n[leave-one-out]")
+    full_est, _, _ = _iv_wald(observed, snps)
+    print(f"  all {len(snps)} instruments : {full_est:+.4f}")
+    for drop in snps:
+        keep = [s for s in snps if s != drop]
+        est, _, _ = _iv_wald(observed, keep)
+        print(f"  dropping {drop:<12}: {est:+.4f}  (shift {est - full_est:+.4f})")
 
-    intercept, slope = egger.params["const"], egger.params["beta_exp"]
-    intercept_p, slope_p = egger.pvalues["const"], egger.pvalues["beta_exp"]
-
-    print("---- MR-Egger ----")
-    print(f"Slope (causal estimate): {slope:.4f}")
-    print(f" Intercept (pleiotropy): {intercept:.4f}")
-
-    if intercept_p < .1:
-        print("The intercept is significant, suggesting pleiotropy. Prefer to use the Egger slope")
-    else:
-        print("The intercept is not significant, suggesting no pleiotropy")
-    return slope, slope_p, intercept, intercept_p
 
 # Might have to fiddle around with the DAG here. Adding/removing confounding variables
 def causal_graph():
@@ -133,7 +156,7 @@ def causal_graph():
         edges.append(f"{c} -> IL6;")
         edges.append(f"{c} -> T1D;")
     edges.append("AGE -> BMI;")
-    return "digraph { " + " ".join(edges) + " }" 
+    return "digraph { " + " ".join(edges) + " }"
 
 def naive_estimate(df):
     X = sm.add_constant(df[["IL6", "BMI", "AGE", "SMOKING"]])
@@ -162,7 +185,7 @@ def run():
     iv = model.estimate_effect(estimand, method_name="iv.instrumental_variable")
     iv_effect = float(iv.value)
 
-    # 3. Naive Estimate 
+    # 3. Naive Estimate
 
     naive = naive_estimate(observed)
 
@@ -178,19 +201,19 @@ def run():
     else:
         print("  -> IV estimate is OUTSIDE the IVW interval; check calibration.")
 
+    # 4. Falsification tests
+    print("\n----- Falsification tests -----")
+    _negative_control_outcome(observed, df)
+    _overidentification_test(observed)
+    _leave_one_out(observed)
 
-    # MR Egger regression
-
-    mr_egger(observed)
-
-    # Wald Regression
-    iv_wald(observed, list(INSTRUMENTS["rsid"]))
-
-
+    # 5. Reconcile DoWhy's IV estimator against hand-rolled 2SLS
+    hand_2sls, _, _ = _iv_wald(observed, list(INSTRUMENTS["rsid"]))
+    print(f"\n  Hand-rolled 2SLS       : {hand_2sls:.4f}")
+    print(f"  DoWhy IV estimate      : {iv_effect:.4f}")
+    print(f"  Difference             : {hand_2sls - iv_effect:+.4f} "
+          f"({100 * (hand_2sls - iv_effect) / iv_effect:+.1f}%)")
 
 
 if __name__ == "__main__":
     run()
-
-
-

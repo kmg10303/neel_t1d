@@ -1,0 +1,4 @@
+rsid,beta_exp,se_exp,effect_allele_exp,other_allele_exp,beta_out,se_out,effect_allele_out,other_allele_out,palindromic
+rs1554606,-0.006,0.0251,G,T,-0.039921,0.014039,G,T,False
+rs1524107,0.096,0.0587,T,C,-0.122717,0.03438,T,C,False
+rs2069852,0.0912,0.073,A,G,-0.109897,0.04091,A,G,False

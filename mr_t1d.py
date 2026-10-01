@@ -6,6 +6,7 @@
 
 #rs2187668
 
+import os
 import pandas as pd
 import ieugwaspy as gwas
 import statsmodels.api as sm
@@ -37,11 +38,37 @@ IL6_INSTRUMENTS = [
 # Set False to use the hardcoded IL6_INSTRUMENTS list above.
 USE_TOPHITS = True
 
+CACHE_DIR = "outputs"
+
+
+def _cache_path(exposure_id, outcome_id):
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    return os.path.join(CACHE_DIR, f"harmonized_{exposure_id}_{outcome_id}.csv")
+
+
+def _batch_associations(variants, ids, batch_size=63):
+    """OpenGWAS caps N(id) * N(variant) <= 64 per call. Batch instead of
+    truncating the instrument list."""
+    results = []
+    for i in range(0, len(variants), batch_size):
+        chunk = variants[i:i + batch_size]
+        res = gwas.associations(variant=chunk, id=ids)
+        if res and not isinstance(res, dict):
+            results.extend(res)
+    return results
+
+
 def get_instruments():
     if not USE_TOPHITS:
         return IL6_INSTRUMENTS
     print("Fetching tophits + LD clumping from OpenGWAS (requires valid JWT)...")
-    hits = gwas.tophits(id=[GWASid], pval=5e-5, clump=1, kb=10000, r2=0.001, pop="EUR")
+    try:
+        hits = gwas.tophits(id=[GWASid], pval=5e-5, clump=1, kb=10000, r2=0.001, pop="EUR")
+    except Exception as e:
+        # When the API is fully unreachable (not just an auth-error dict), the
+        # underlying ieugwaspy call raises instead of returning a dict/empty list.
+        print(f"WARNING: tophits raised {type(e).__name__}: {e}. Falling back to hardcoded IL6_INSTRUMENTS.")
+        return IL6_INSTRUMENTS
     # API returns a dict with "message" key on auth errors instead of a list
     if not hits or isinstance(hits, dict):
         msg = hits.get("message", "empty response") if isinstance(hits, dict) else "empty response"
@@ -52,7 +79,7 @@ def get_instruments():
         print("WARNING: tophits returned hits but no rsids. Falling back to hardcoded IL6_INSTRUMENTS.")
         return IL6_INSTRUMENTS
     print(f"Tophits returned {len(snp_list)} clumped instruments: {snp_list}")
-    return snp_list[:63]
+    return snp_list
 
 # Retained for backward-compatibility with gwas_id_check()
 HLA_SNPs = ["rs12722495-A", "rs61839660-C", "rs12722496-G"]
@@ -73,7 +100,98 @@ def plot_mr(x, y, merged):
     plt.legend()
     plt.savefig("scatterplot.png")
 
-def mr_analysis(snps=HLA_SNPs):
+
+def mr_egger(merged):
+    """Weighted MR-Egger regression. A significant intercept indicates
+    directional pleiotropy -- the IVW estimate may be biased."""
+    d = merged.copy()
+    flip = d["beta_exp"] < 0
+    d.loc[flip, "beta_exp"] *= -1
+    d.loc[flip, "beta_out"] *= -1
+
+    X = sm.add_constant(d["beta_exp"])
+    weights = 1 / (d["se_out"] ** 2)
+    egger = sm.WLS(d["beta_out"], X, weights=weights).fit()
+
+    intercept, slope = egger.params["const"], egger.params["beta_exp"]
+    intercept_se, slope_se = egger.bse["const"], egger.bse["beta_exp"]
+    intercept_p, slope_p = egger.pvalues["const"], egger.pvalues["beta_exp"]
+
+    print("\n----- MR-Egger -----")
+    print(f"  Slope (causal estimate): {slope:.4f}  SE {slope_se:.4f}  p={slope_p:.4f}")
+    print(f"  Intercept (pleiotropy):  {intercept:.4f}  SE {intercept_se:.4f}  p={intercept_p:.4f}")
+    if intercept_p < 0.05:
+        print("  WARNING: intercept significantly different from 0 -- evidence of directional")
+        print("  pleiotropy. Prefer the Egger slope over IVW.")
+    else:
+        print("  Intercept not significant -- no strong evidence against IVW's no-pleiotropy")
+        print("  assumption from this test alone.")
+    return slope, slope_se, slope_p, intercept, intercept_se, intercept_p
+
+
+def weighted_median(merged, n_boot=1000, seed=0):
+    """Weighted median of per-SNP Wald ratios, with a bootstrap SE."""
+    def _wm(d):
+        # reset_index is required: bootstrap resamples (replace=True) create
+        # duplicate index labels, and the .loc[i0]/.loc[i1] lookups below
+        # return a Series instead of a scalar when the index isn't unique.
+        d = d.sort_values("wald").reset_index(drop=True)
+        cw = d["weight"].cumsum() - 0.5 * d["weight"]
+        cw /= d["weight"].sum()
+        below = d[cw.values <= 0.5]
+        above = d[cw.values > 0.5]
+        if below.empty:
+            return d["wald"].iloc[0]
+        if above.empty:
+            return d["wald"].iloc[-1]
+        i0, i1 = below.index[-1], above.index[0]
+        w0, w1 = cw.loc[i0], cw.loc[i1]
+        v0, v1 = d.loc[i0, "wald"], d.loc[i1, "wald"]
+        return v0 + (0.5 - w0) / (w1 - w0) * (v1 - v0)
+
+    d = merged.copy()
+    d["wald"] = d["beta_out"] / d["beta_exp"]
+    d["wald_se"] = d["se_out"] / d["beta_exp"].abs()
+    d["weight"] = 1 / (d["wald_se"] ** 2)
+
+    median = _wm(d)
+
+    rng = np.random.default_rng(seed)
+    boots = [_wm(d.sample(len(d), replace=True, weights=d["weight"],
+                           random_state=rng.integers(1_000_000_000)))
+             for _ in range(n_boot)]
+    se = float(np.std(boots, ddof=1))
+    z = median / se
+    p = 2 * (1 - stats.norm.cdf(abs(z)))
+
+    print("\n----- Weighted median -----")
+    print(f"  Estimate: {median:.4f}  bootstrap SE {se:.4f}  p={p:.4f}")
+    return median, se, p
+
+
+def cochrans_q(merged, ivw_beta):
+    """Cochran's Q heterogeneity test across per-SNP Wald ratios."""
+    d = merged.copy()
+    d["wald"] = d["beta_out"] / d["beta_exp"]
+    d["wald_var"] = (d["se_out"] / d["beta_exp"]) ** 2
+    q = float(((d["wald"] - ivw_beta) ** 2 / d["wald_var"]).sum())
+    dfree = len(d) - 1
+    p = float(1 - stats.chi2.cdf(q, dfree)) if dfree > 0 else float("nan")
+
+    print("\n----- Cochran's Q (heterogeneity) -----")
+    if dfree <= 0:
+        print("  Not testable with fewer than 2 instruments.")
+    else:
+        print(f"  Q = {q:.3f} on {dfree} df, p = {p:.3f}")
+        if p < 0.05:
+            print("  WARNING: significant heterogeneity -- IVW's equal-effect assumption is")
+            print("  violated. At least one instrument is likely pleiotropic or invalid.")
+        else:
+            print("  No significant heterogeneity detected.")
+    return q, dfree, p
+
+
+def mr_analysis():
     try:
         print("Loading data")
         # Standardizing column mapping for ieugwaspy
@@ -85,57 +203,84 @@ def mr_analysis(snps=HLA_SNPs):
             "rsid": "rsid"
         }
 
+        cache_file = _cache_path(GWASid, OUTCOME_ID)
+        merged = None
 
-        instruments = get_instruments()
-        print(f"Fetching IL-6 exposure data for {len(instruments)} instruments...")
-        exposure_raw = gwas.associations(variant=instruments, id=[GWASid])
+        try:
+            instruments = get_instruments()
+            print(f"Fetching IL-6 exposure data for {len(instruments)} instruments...")
+            exposure_raw = _batch_associations(instruments, [GWASid])
 
-        if not exposure_raw or isinstance(exposure_raw, dict):
-            print("No exposure data found. Check GWASid or API token.")
-            print(type(exposure_raw), exposure_raw)
-            return
-        
+            if not exposure_raw or isinstance(exposure_raw, dict):
+                raise RuntimeError(f"No exposure data found. Check GWASid or API token. "
+                                    f"({type(exposure_raw)}, {exposure_raw})")
 
-        exposure = pd.DataFrame(exposure_raw).rename(columns=col_map)
-        snps = exposure["rsid"].dropna().unique().tolist()
-        print(f"Found {len(snps)} genetic instruments.")
+            exposure = pd.DataFrame(exposure_raw).rename(columns=col_map)
+            snps = exposure["rsid"].dropna().unique().tolist()
+            print(f"Found {len(snps)} genetic instruments.")
 
-        # 2. Get Outcome Data
-        outcome_raw = gwas.associations(variant=snps, id=[OUTCOME_ID])
-        if not outcome_raw:
-            print("No outcome data found.")
-            return
-            
-        outcome = pd.DataFrame(outcome_raw).rename(columns=col_map)
+            # 2. Get Outcome Data
+            outcome_raw = _batch_associations(snps, [OUTCOME_ID])
+            if not outcome_raw:
+                raise RuntimeError("No outcome data found.")
 
-        # 3. Merge and Harmonize
-        merged = pd.merge(
-            exposure[["rsid", "beta", "se", "effect_allele", "other_allele"]].rename(
-                columns={"beta": "beta_exp", "se": "se_exp"}
-            ),
-            outcome[["rsid", "beta", "se", "effect_allele", "other_allele"]].rename(
-                columns={"beta": "beta_out", "se": "se_out"}
-            ),
-            on="rsid",
-            suffixes=("_exp", "_out")
-        )
+            outcome = pd.DataFrame(outcome_raw).rename(columns=col_map)
 
-        # Harmonization Logic
-        same = (merged["effect_allele_exp"] == merged["effect_allele_out"]) & \
-               (merged["other_allele_exp"] == merged["other_allele_out"])
-        
-        swap = (merged["effect_allele_exp"] == merged["other_allele_out"]) & \
-               (merged["other_allele_exp"] == merged["effect_allele_out"])
-        
-        merged = merged[same | swap].copy()
-        merged.loc[swap, "beta_out"] *= -1
+            # 3. Merge and Harmonize
+            merged = pd.merge(
+                exposure[["rsid", "beta", "se", "effect_allele", "other_allele"]].rename(
+                    columns={"beta": "beta_exp", "se": "se_exp"}
+                ),
+                outcome[["rsid", "beta", "se", "effect_allele", "other_allele"]].rename(
+                    columns={"beta": "beta_out", "se": "se_out"}
+                ),
+                on="rsid",
+                suffixes=("_exp", "_out")
+            )
 
-        # summary_df = merged.rename(columns={"beta_exp": "IL6", "beta_out": "T1D"})
-        
-        if merged.empty:
-            print("No harmonized SNPs left.")
-            return
-        
+            # Palindromic SNPs (A/T, C/G) are strand-ambiguous: "same" and "swap"
+            # can both evaluate true for them without a trustworthy EAF to resolve
+            # strand, so exclude them outright rather than risk a silent sign flip.
+            def _is_palindromic(a1, a2):
+                return {a1, a2} in ({"A", "T"}, {"C", "G"})
+
+            merged["palindromic"] = merged.apply(
+                lambda r: _is_palindromic(r["effect_allele_exp"], r["other_allele_exp"]), axis=1
+            )
+            n_palindromic = int(merged["palindromic"].sum())
+            if n_palindromic:
+                print(f"WARNING: excluding {n_palindromic} palindromic SNP(s) (A/T or C/G) -- "
+                      f"strand cannot be resolved without a trustworthy EAF field.")
+                merged = merged[~merged["palindromic"]].copy()
+
+            # Harmonization Logic
+            same = (merged["effect_allele_exp"] == merged["effect_allele_out"]) & \
+                   (merged["other_allele_exp"] == merged["other_allele_out"])
+
+            swap = (merged["effect_allele_exp"] == merged["other_allele_out"]) & \
+                   (merged["other_allele_exp"] == merged["effect_allele_out"])
+
+            merged = merged[same | swap].copy()
+
+            # Recompute against the POST-filter index -- the mask above was built
+            # before rows were dropped and is not guaranteed to align afterward.
+            swap = (merged["effect_allele_exp"] == merged["other_allele_out"]) & \
+                   (merged["other_allele_exp"] == merged["effect_allele_out"])
+            merged.loc[swap, "beta_out"] *= -1
+
+            if merged.empty:
+                raise RuntimeError("No harmonized SNPs left.")
+
+            merged.to_csv(cache_file, index=False)
+            print(f"Cached harmonized data -> {cache_file}")
+
+        except Exception as e:
+            if os.path.exists(cache_file):
+                print(f"Live API call failed ({e}); falling back to cached harmonized data ({cache_file}).")
+                merged = pd.read_csv(cache_file)
+            else:
+                raise
+
         num_snps = len(merged)
 
         # F-statistic per instrument
@@ -153,7 +298,7 @@ def mr_analysis(snps=HLA_SNPs):
             b_exp = row["beta_exp"]
             b_out = row["beta_out"]
             se_out = row["se_out"]
-            
+
             wald_beta = b_out / b_exp
             wald_se = se_out / abs(b_exp)  # Simplified SE calculation
             z_score = wald_beta / wald_se
@@ -175,17 +320,23 @@ def mr_analysis(snps=HLA_SNPs):
         print("\n----- MR Results (IVW via WLS) -----")
         print(wls.summary())
 
+        mr_egger(merged)
+        weighted_median(merged)
+        cochrans_q(merged, wls.params.iloc[0])
+
         # print(wls.params)
         x_line = np.linspace(merged["beta_exp"].min(), merged["beta_exp"].max())
         plot_mr(x_line, wls.params.iloc[0] * x_line, merged)
-        
-    except Exception as e:
-        print(f"An error occurred: {e}")
+
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        raise
 
 def gwas_id_check(ids, snps):
     for id in ids:
         info = gwas.gwasinfo([id])
-        
+
         if info:
             print("Found info in id", id)
         else:
@@ -210,7 +361,7 @@ def gwas_id_check(ids, snps):
 
 
     for id in ids:
-        # Check tophits for each. 
+        # Check tophits for each.
         hits = gwas.associations(variant=snps, id=[id])
         print(f"Top hits for {id}: {len(hits)}")
 
@@ -222,6 +373,3 @@ def gwas_id_check(ids, snps):
 if __name__ == "__main__":
     mr_analysis()
     print("Done")
-
-
-
