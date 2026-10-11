@@ -1,0 +1,2 @@
+rsid,chr,position,beta_exp,se_exp,effect_allele_exp,other_allele_exp,eaf_exp,n_exp,beta_out,se_out,effect_allele_out,other_allele_out,eaf_out,palindromic,F_stat,weak,r2_exp,r2_out,steiger_p,steiger_ok
+rs2228145,1,154426970,0.1747,0.0124,C,A,0.3786,21758,-0.044346,0.014436,C,A,0.385,False,198.49174037460975,False,0.009041053772589994,0.00014156244787810212,0.0,True

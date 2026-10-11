@@ -14,17 +14,43 @@ from scipy import stats
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Ahola-Olli 2017 IL-6 pQTL GWAS (ieu-b- batch, 41 cytokines, N=8293)
-# Verify ID with: gwas.gwasinfo(["ieu-b-30"])
 # https://opengwas.io/datasets/
-#ebi-a-GCST004446
-#ieu-b-30
-# prot-a-1538
+# Exposure datasets (all confirmed with gwas.gwasinfo on 2026-10-09):
+#   prot-a-1538         Interleukin-6, Sun BB 2018 (PMID 29875488), N=3,301
+#                       NOTE: this is Sun 2018, NOT Ahola-Olli. It has zero hits at 5e-8.
+#   ebi-a-GCST90012005  Interleukin-6 levels, Folkersen L 2020 (PMID 33067605), N=21,758
+#   ebi-a-GCST004446    Interleukin-6 levels, Ahola-Olli AV 2016, N=8,189 (zero hits at 5e-8)
 # ukb-e-30000_CSA - White blood count
-GWASid = "prot-a-1538"
+SUN_IL6 = "prot-a-1538"
+FOLKERSEN_IL6 = "ebi-a-GCST90012005"
 
-# Outcome ID
+# Outcome ID: Type 1 diabetes, Chiou J 2021 (PMID 34012112), 18,942 cases / 501,638 controls
 OUTCOME_ID = "ebi-a-GCST90014023"
+
+# Each entry is one MR analysis. "mode" is "genome" (all clumped hits) or "cis"
+# (only hits inside CIS_REGIONS).
+RUNS = [
+    {"label": "sun_5e-5",       "exposure": SUN_IL6,       "pval": 5e-5, "mode": "genome"},  # original weak-instrument run, kept as a contrast
+    {"label": "sun_5e-8",       "exposure": SUN_IL6,       "pval": 5e-8, "mode": "genome"},
+    {"label": "folkersen_5e-8", "exposure": FOLKERSEN_IL6, "pval": 5e-8, "mode": "genome"},
+    {"label": "folkersen_cis",  "exposure": FOLKERSEN_IL6, "pval": 5e-8, "mode": "cis"},
+]
+
+# Gene coordinates (GRCh37) plus a flanking window: (chromosome, start, end)
+CIS_REGIONS = {
+    "IL6":  ("7", 22766766 - 500_000, 22771621 + 500_000),
+    "IL6R": ("1", 154377669 - 500_000, 154441926 + 500_000),
+}
+
+# The MHC is the strongest T1D locus in the genome and has long-range LD, so any
+# instrument there is almost certainly pleiotropic. Extended MHC, GRCh37.
+EXCLUDE_MHC = True
+MHC_REGION = ("6", 25_000_000, 34_000_000)
+
+# Drop instruments that explain more variance in T1D than in IL-6 (wrong causal direction).
+STEIGER_FILTER = True
+# Population lifetime prevalence of T1D, used to put the outcome r2 on the liability scale.
+T1D_PREVALENCE = 0.005
 
 # Literature-curated IL-6 pQTL instruments (Ahola-Olli 2017 + IL6R literature)
 IL6_PRIMARY = "rs4537545"
@@ -41,45 +67,65 @@ USE_TOPHITS = True
 CACHE_DIR = "outputs"
 
 
-def _cache_path(exposure_id, outcome_id):
+def _cache_path(label, exposure_id, outcome_id):
     os.makedirs(CACHE_DIR, exist_ok=True)
-    return os.path.join(CACHE_DIR, f"harmonized_{exposure_id}_{outcome_id}.csv")
+    return os.path.join(CACHE_DIR, f"harmonized_{label}_{exposure_id}_{outcome_id}.csv")
 
 
 def _batch_associations(variants, ids, batch_size=63):
     """OpenGWAS caps N(id) * N(variant) <= 64 per call. Batch instead of
-    truncating the instrument list."""
+    truncating the instrument list.
+
+    proxies=0: by default the API silently substitutes an LD proxy (a different
+    SNP, with different betas) but still labels it with the rsid we asked for."""
     results = []
     for i in range(0, len(variants), batch_size):
         chunk = variants[i:i + batch_size]
-        res = gwas.associations(variant=chunk, id=ids)
+        res = gwas.associations(variant=chunk, id=ids, proxies=0)
         if res and not isinstance(res, dict):
             results.extend(res)
     return results
 
 
-def get_instruments():
+def _in_region(df, region):
+    chrom, start, end = region
+    pos = pd.to_numeric(df["position"], errors="coerce")
+    return (df["chr"].astype(str) == chrom) & (pos >= start) & (pos <= end)
+
+
+def get_instruments(exposure_id, pval):
     if not USE_TOPHITS:
         return IL6_INSTRUMENTS
-    print("Fetching tophits + LD clumping from OpenGWAS (requires valid JWT)...")
+    print(f"Fetching tophits (p < {pval:g}) + LD clumping from OpenGWAS (requires valid JWT)...")
     try:
-        hits = gwas.tophits(id=[GWASid], pval=5e-5, clump=1, kb=10000, r2=0.001, pop="EUR")
+        hits = gwas.tophits(id=[exposure_id], pval=pval, clump=1, kb=10000, r2=0.001, pop="EUR")
     except Exception as e:
         # When the API is fully unreachable (not just an auth-error dict), the
         # underlying ieugwaspy call raises instead of returning a dict/empty list.
         print(f"WARNING: tophits raised {type(e).__name__}: {e}. Falling back to hardcoded IL6_INSTRUMENTS.")
         return IL6_INSTRUMENTS
     # API returns a dict with "message" key on auth errors instead of a list
-    if not hits or isinstance(hits, dict):
-        msg = hits.get("message", "empty response") if isinstance(hits, dict) else "empty response"
-        print(f"WARNING: tophits failed ({msg}). Falling back to hardcoded IL6_INSTRUMENTS.")
+    if isinstance(hits, dict):
+        print(f"WARNING: tophits failed ({hits.get('message', 'no message')}). Falling back to hardcoded IL6_INSTRUMENTS.")
         return IL6_INSTRUMENTS
+    # An empty list is a real answer: nothing in this GWAS passes the threshold.
     snp_list = [h["rsid"] for h in hits if "rsid" in h]
-    if not snp_list:
-        print("WARNING: tophits returned hits but no rsids. Falling back to hardcoded IL6_INSTRUMENTS.")
-        return IL6_INSTRUMENTS
     print(f"Tophits returned {len(snp_list)} clumped instruments: {snp_list}")
     return snp_list
+
+
+def describe_datasets(exposure_id, outcome_id):
+    """Print what each GWAS ID actually is, and return the two info rows."""
+    info = {row["id"]: row for row in gwas.gwasinfo([exposure_id, outcome_id])}
+    print("\n----- Datasets -----")
+    for role, gid in (("Exposure", exposure_id), ("Outcome", outcome_id)):
+        row = info[gid]
+        size = f"N={row.get('sample_size')}"
+        if row.get("ncase"):
+            size += f" ({row['ncase']} cases / {row['ncontrol']} controls)"
+        print(f"  {role}: {gid} -- {row.get('trait')}, {row.get('author')} {row.get('year')}, "
+              f"PMID {row.get('pmid')}, {size}, {row.get('population')}")
+    return info[exposure_id], info[outcome_id]
 
 # Retained for backward-compatibility with gwas_id_check()
 HLA_SNPs = ["rs12722495-A", "rs61839660-C", "rs12722496-G"]
@@ -90,15 +136,18 @@ HLA_SNPs = ["rs12722495-A", "rs61839660-C", "rs12722496-G"]
 # plt.xlabel("")
 # plt.ylabel("")
 
-def plot_mr(x, y, merged):
+def plot_mr(x, y, merged, label):
+    plt.figure()
     plt.errorbar(merged["beta_exp"], merged["beta_out"],
              xerr=merged["se_exp"], yerr=merged["se_out"],
              fmt='o', color='black', label='SNPs')
     plt.plot(x, y, label="IVW slope")
-    plt.xlabel("input")
-    plt.ylabel("outcome")
+    plt.xlabel("SNP effect on IL-6 (SD)")
+    plt.ylabel("SNP effect on T1D (log odds)")
+    plt.title(label)
     plt.legend()
-    plt.savefig("scatterplot.png")
+    plt.savefig(f"scatterplot_{label}.png")
+    plt.close()
 
 
 def mr_egger(merged):
@@ -191,9 +240,67 @@ def cochrans_q(merged, ivw_beta):
     return q, dfree, p
 
 
-def mr_analysis():
+def steiger(merged, n_exp, out_info):
+    """Steiger directionality test. An instrument for IL-6 should explain more
+    variance in IL-6 than in T1D; if it's the other way round, the SNP probably
+    acts on T1D first. Outcome r2 uses the liability-scale formula from
+    TwoSampleMR's get_r_from_lor (logit model)."""
+    d = merged
+    # Exposure (continuous): r2 from the F statistic
+    f = (d["beta_exp"] / d["se_exp"]) ** 2
+    d["r2_exp"] = f / (f + n_exp - 2)
+
+    # Outcome (case/control): turn the log odds ratio into variance explained
+    ncase, ncontrol = out_info["ncase"], out_info["ncontrol"]
+    lor, af = d["beta_out"], d["eaf_out"]
+    case_frac = ncase / (ncase + ncontrol)
+    # The GWAS has more cases than the population does, so reweight the allele frequency
+    af_case = af * np.exp(lor) / (1 - af + af * np.exp(lor))
+    af_control = (af - case_frac * af_case) / (1 - case_frac)
+    pop_af = T1D_PREVALENCE * af_case + (1 - T1D_PREVALENCE) * af_control
+    vg = lor ** 2 * pop_af * (1 - pop_af)
+    d["r2_out"] = vg / (vg + np.pi ** 2 / 3)
+
+    z = (np.arctanh(np.sqrt(d["r2_exp"])) - np.arctanh(np.sqrt(d["r2_out"]))) / \
+        np.sqrt(1 / (n_exp - 3) + 1 / (ncase + ncontrol - 3))
+    d["steiger_p"] = 2 * (1 - stats.norm.cdf(np.abs(z)))
+    d["steiger_ok"] = d["r2_exp"] > d["r2_out"]
+
+    print("\n----- Steiger directionality -----")
+    print(d[["rsid", "r2_exp", "r2_out", "steiger_ok", "steiger_p"]].to_string(index=False))
+    n_bad = int((~d["steiger_ok"]).sum())
+    print(f"  {n_bad} of {len(d)} instrument(s) explain more variance in T1D than in IL-6.")
+    return d
+
+
+def overlap_check(exp_info, out_info, mean_f):
+    """Sample overlap biases two-sample MR toward the confounded observational
+    estimate by roughly (overlap fraction) x (1 / mean F). The API can't tell us
+    which cohorts are shared, so report the worst case and what to check by hand."""
+    print("\n----- Sample overlap -----")
+    print(f"  Exposure: {exp_info.get('author')} {exp_info.get('year')}, N={exp_info.get('sample_size')}, "
+          f"{exp_info.get('population')}  (PMID {exp_info.get('pmid')})")
+    print(f"  Outcome:  {out_info.get('author')} {out_info.get('year')}, N={out_info.get('sample_size')}, "
+          f"{out_info.get('population')}  (PMID {out_info.get('pmid')})")
+    print(f"  Mean F = {mean_f:.1f}. Worst case (every exposure participant is also in the outcome GWAS):")
+    print(f"  relative bias toward the confounded estimate ~ 1/F = {100 / mean_f:.1f}%.")
+    print("  TODO by hand: compare the cohort lists in the two papers to get the real overlap fraction.")
+
+
+def _report(label, method, beta, se, p, nsnp):
+    """Print the estimate as an odds ratio and return a row for the summary table."""
+    lo, hi = np.exp(beta - 1.96 * se), np.exp(beta + 1.96 * se)
+    print(f"  {method}: OR per SD higher IL-6 = {np.exp(beta):.3f} "
+          f"(95% CI {lo:.3f} to {hi:.3f}), p = {p:.4g}, {nsnp} SNP(s)")
+    return {"run": label, "method": method, "nsnp": nsnp, "beta": beta, "se": se,
+            "or_per_sd": np.exp(beta), "ci_low": lo, "ci_high": hi, "p": p}
+
+
+def mr_analysis(run):
+    label, exposure_id, pval, mode = run["label"], run["exposure"], run["pval"], run["mode"]
+    rows = []
     try:
-        print("Loading data")
+        print(f"\n\n========== RUN: {label} (exposure {exposure_id}, p < {pval:g}, {mode}) ==========")
         # Standardizing column mapping for ieugwaspy
         col_map = {
             "ea": "effect_allele",
@@ -203,21 +310,44 @@ def mr_analysis():
             "rsid": "rsid"
         }
 
-        cache_file = _cache_path(GWASid, OUTCOME_ID)
+        cache_file = _cache_path(label, exposure_id, OUTCOME_ID)
         merged = None
 
         try:
-            instruments = get_instruments()
+            exp_info, out_info = describe_datasets(exposure_id, OUTCOME_ID)
+
+            instruments = get_instruments(exposure_id, pval)
+            if not instruments:
+                print(f"No instruments pass p < {pval:g} in {exposure_id}. Nothing to analyse for this run.")
+                return rows
             print(f"Fetching IL-6 exposure data for {len(instruments)} instruments...")
-            exposure_raw = _batch_associations(instruments, [GWASid])
+            exposure_raw = _batch_associations(instruments, [exposure_id])
 
             if not exposure_raw or isinstance(exposure_raw, dict):
                 raise RuntimeError(f"No exposure data found. Check GWASid or API token. "
                                     f"({type(exposure_raw)}, {exposure_raw})")
 
             exposure = pd.DataFrame(exposure_raw).rename(columns=col_map)
+
+            if EXCLUDE_MHC:
+                in_mhc = _in_region(exposure, MHC_REGION)
+                if in_mhc.any():
+                    print(f"Excluding {int(in_mhc.sum())} MHC instrument(s): {exposure.loc[in_mhc, 'rsid'].tolist()}")
+                    exposure = exposure[~in_mhc].copy()
+
+            if mode == "cis":
+                in_cis = pd.Series(False, index=exposure.index)
+                for region in CIS_REGIONS.values():
+                    in_cis |= _in_region(exposure, region)
+                print(f"Cis-only: keeping {int(in_cis.sum())} of {len(exposure)} instrument(s) "
+                      f"inside {list(CIS_REGIONS)}.")
+                exposure = exposure[in_cis].copy()
+
             snps = exposure["rsid"].dropna().unique().tolist()
             print(f"Found {len(snps)} genetic instruments.")
+            if not snps:
+                print("No instruments left after filtering. Nothing to analyse for this run.")
+                return rows
 
             # 2. Get Outcome Data
             outcome_raw = _batch_associations(snps, [OUTCOME_ID])
@@ -228,11 +358,11 @@ def mr_analysis():
 
             # 3. Merge and Harmonize
             merged = pd.merge(
-                exposure[["rsid", "beta", "se", "effect_allele", "other_allele"]].rename(
-                    columns={"beta": "beta_exp", "se": "se_exp"}
+                exposure[["rsid", "chr", "position", "beta", "se", "effect_allele", "other_allele", "eaf", "n"]].rename(
+                    columns={"beta": "beta_exp", "se": "se_exp", "eaf": "eaf_exp", "n": "n_exp"}
                 ),
-                outcome[["rsid", "beta", "se", "effect_allele", "other_allele"]].rename(
-                    columns={"beta": "beta_out", "se": "se_out"}
+                outcome[["rsid", "beta", "se", "effect_allele", "other_allele", "eaf"]].rename(
+                    columns={"beta": "beta_out", "se": "se_out", "eaf": "eaf_out"}
                 ),
                 on="rsid",
                 suffixes=("_exp", "_out")
@@ -267,9 +397,18 @@ def mr_analysis():
             swap = (merged["effect_allele_exp"] == merged["other_allele_out"]) & \
                    (merged["other_allele_exp"] == merged["effect_allele_out"])
             merged.loc[swap, "beta_out"] *= -1
+            merged.loc[swap, "eaf_out"] = 1 - merged.loc[swap, "eaf_out"]
 
             if merged.empty:
                 raise RuntimeError("No harmonized SNPs left.")
+
+            # F-statistic per instrument
+            merged["F_stat"] = (merged["beta_exp"] / merged["se_exp"]) ** 2
+            merged["weak"] = merged["F_stat"] < 10
+
+            n_exp = merged["n_exp"].fillna(exp_info.get("sample_size")).astype(float)
+            merged = steiger(merged, n_exp, out_info)
+            overlap_check(exp_info, out_info, merged["F_stat"].mean())
 
             merged.to_csv(cache_file, index=False)
             print(f"Cached harmonized data -> {cache_file}")
@@ -281,16 +420,21 @@ def mr_analysis():
             else:
                 raise
 
-        num_snps = len(merged)
-
-        # F-statistic per instrument
-        merged["F_stat"] = (merged["beta_exp"] / merged["se_exp"]) ** 2
-        merged["weak"] = merged["F_stat"] < 10
         print("\n----- Instrument Strength (F-statistics) -----")
-        print(merged[["rsid", "beta_exp", "se_exp", "F_stat", "weak"]].to_string(index=False))
+        print(merged[["rsid", "chr", "position", "beta_exp", "se_exp", "F_stat", "weak"]].to_string(index=False))
         weak_count = int(merged["weak"].sum())
         if weak_count:
             print(f"WARNING: {weak_count} instrument(s) have F < 10 (weak instrument bias risk).")
+
+        if STEIGER_FILTER and not merged["steiger_ok"].all():
+            dropped = merged.loc[~merged["steiger_ok"], "rsid"].tolist()
+            print(f"Steiger filter: dropping {len(dropped)} instrument(s): {dropped}")
+            merged = merged[merged["steiger_ok"]].copy()
+            if merged.empty:
+                print("No instruments left after Steiger filtering.")
+                return rows
+
+        num_snps = len(merged)
 
         # If only one SNP, perform Wald ratio
         if num_snps < 2:
@@ -304,11 +448,12 @@ def mr_analysis():
             z_score = wald_beta / wald_se
             p_val = 2 * (1 - stats.norm.cdf(abs(z_score)))
 
-            print(f"SNP: {row['rsid']}")
+            print(f"\n----- MR Results (Wald ratio, single SNP {row['rsid']}) -----")
             print(f"Causal Estimate (Beta): {wald_beta:.4f}")
             print(f"Standard Error: {wald_se:.4f}")
-            print(f"P-value: {p_val:.4f}")
-            return
+            rows.append(_report(label, "Wald ratio", wald_beta, wald_se, p_val, 1))
+            print("  Egger / weighted median / Cochran's Q need 3+ instruments -- not run.")
+            return rows
 
         # 4. Regression (IVW)
         X = merged["beta_exp"]
@@ -319,14 +464,21 @@ def mr_analysis():
 
         print("\n----- MR Results (IVW via WLS) -----")
         print(wls.summary())
+        rows.append(_report(label, "IVW", wls.params.iloc[0], wls.bse.iloc[0], wls.pvalues.iloc[0], num_snps))
 
-        mr_egger(merged)
-        weighted_median(merged)
+        if num_snps >= 3:
+            slope, slope_se, slope_p, _, _, _ = mr_egger(merged)
+            rows.append(_report(label, "MR-Egger", slope, slope_se, slope_p, num_snps))
+            median, median_se, median_p = weighted_median(merged)
+            rows.append(_report(label, "Weighted median", median, median_se, median_p, num_snps))
+        else:
+            print("  Egger / weighted median need 3+ instruments -- not run.")
         cochrans_q(merged, wls.params.iloc[0])
 
         # print(wls.params)
         x_line = np.linspace(merged["beta_exp"].min(), merged["beta_exp"].max())
-        plot_mr(x_line, wls.params.iloc[0] * x_line, merged)
+        plot_mr(x_line, wls.params.iloc[0] * x_line, merged, label)
+        return rows
 
     except Exception:
         import traceback
@@ -371,5 +523,12 @@ def gwas_id_check(ids, snps):
         # Done
 
 if __name__ == "__main__":
-    mr_analysis()
+    summary = []
+    for run in RUNS:
+        summary.extend(mr_analysis(run))
+
+    print("\n\n========== SUMMARY (odds ratio for T1D per SD higher IL-6) ==========")
+    summary = pd.DataFrame(summary)
+    print(summary.round(4).to_string(index=False))
+    summary.to_csv(os.path.join(CACHE_DIR, "mr_summary.csv"), index=False)
     print("Done")

@@ -164,6 +164,12 @@ def naive_estimate(df):
 
 def run():
 
+    print("=" * 78)
+    print("METHOD DEMO ON SIMULATED DATA -- NOT A RESULT ABOUT T1D.")
+    print(f"The 'true' effect ({IVW_BETA}) is typed in by hand above; every estimate below")
+    print("only shows whether the method can recover a number we planted.")
+    print("=" * 78)
+
     df = simulate()
 
     observed = df.drop(columns=["U"])

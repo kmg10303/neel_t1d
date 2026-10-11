@@ -8,10 +8,14 @@ IN TERMINAL:
 4. pip install -r requirements.txt
 5. python mr_t1d.py
 
-
 WHEN DONE:
 1. git add . 
 2. git commit -m "[INSERT MESSAGE HERE ABOUT CHANGES]"
 3. git push origin main
 
 beta_exp should be around 3
+
+TO GET FROM GIT:
+1. copy under "code", ssh/http
+2. In terminal: git clone [paste link]
+3. cd neel_research_index
